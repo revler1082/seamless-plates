@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <title>Seamless M&S Plates (BETA)</title>
+    <style type="text/css">
+        html, body, #map_canvas {height: 100%; margin: 0px; padding: 0px;}
+        #user_input{position:fixed;top:2em;left:8em;z-index:1000;}
+        .invert{-ms-filter:'invert(100%)';-webkit-filter: invert(100%);filter: invert(1);}
+    </style>
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <script src="./js/jQuery/jquery-1.11.1.min.js" type="text/javascript"></script>
+    <script src="./js/jQuery/jquery-migrate-1.2.1.min.js"></script>
+    <script src="./js/jQuery/plugins/jquery.cookie.js" type="text/javascript"></script>
+    <script src="./js/jQuery/plugins/jquery.ba-bbq.min.js" type="text/javascript"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?v=3.exp&sensor=false" type="text/javascript"></script>
+    <script>
+
+        var map;
+        var e_or_g;
+        var inverted = false;
+        var alphas = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+        // maptypeid->last center
+        var lastMapPositions = {
+            m_e: new google.maps.LatLng(41.43852198660014, -154.8358154296875),
+            bq_e: new google.maps.LatLng(73.01212892328714, -137.427978515625),
+            x_e: new google.maps.LatLng(68.36068235402779, -141.910400390625),
+            s_e: new google.maps.LatLng(70.44411633680222, -99.305419921875)
+        };
+
+        // maptypeid->last zoom
+        var lastMapZooms = {
+            m_e: 7,
+            bq_e: 7,
+            x_e: 7,
+            s_e: 7
+        };
+
+        // region-> {max_x, max_y}
+        var plateBounds = {
+            m: { max_x: 15, max_y: 82 },
+            bq: { max_x: 73, max_y: 77 },
+            x: { max_x: 38, max_y: 60 }, // change this to 51 later, and in rows.txt folder ..
+            s: { max_x: 67, max_y: 70 } // same as above
+        }
+
+        /**
+
+        */
+        function getWorldCoordinatesFromMSPlate(region, plateType, plate) {
+            var numbers = "";
+            var letters = "";
+            var x = 0;
+            var y = 0;
+
+            for (var i = 0; i < plate.length; ++i) {
+                var u = plate[i].toUpperCase();
+                if (!isNaN(parseInt(plate[i]))) {
+                    numbers += plate[i];
+                } else if (u >= 'A' && u <= 'Z') {
+                    letters += u;
+                }
+            }
+
+            if (numbers.length == 0 || letters.length == 0) {
+                alert('"' + plate + '"' + ' is not a valid M&S Plate');
+                return null;
+            }
+            else {
+                if (region === 's') {
+                    if (numbers.length !== 4) {
+                        alert(plate + " is not a valid SI plate");
+                        return null;
+                    }
+                } else {
+                    if (numbers.length > 2 || letters.length > 2) {
+                        alert(plate + " is not a valid " + region + " plate");
+                        return null;
+                    }
+                }
+            }
+
+            y = parseInt(numbers);
+
+            if (region !== 's') {
+                var p = 0;
+                for (var i = letters.length - 1; i >= 0; --i) {
+                    x += (alphas.indexOf(letters[i]) + 1) * Math.pow(26, p++);
+                }
+            } else {
+                if (numbers.length !== 4) {
+
+                } else {
+                    x = parseInt(numbers.substr(0, 2));
+                    x -= 9;
+                    y = parseInt(numbers.substr(2, 2));
+                }
+            }
+
+            // go from 1 based indexing to 0 based indexing..
+            x -= 1;
+            //x *= 2;
+            //x += 1;
+            x += .5;
+            y = plateBounds[region].max_y - y;
+
+            var tileSizeWidthDiff = 256 - map.mapTypes[region + '_' + plateType].tileSize.width;
+            x -= (x * tileSizeWidthDiff) / 256;
+            x += tileSizeWidthDiff / map.mapTypes[region + '_' + plateType].tileSize.width;
+
+            var tileSizeHeightDiff = 256 - map.mapTypes[region + '_' + plateType].tileSize.height;
+            y -= (y * tileSizeHeightDiff) / 256;
+            y += tileSizeHeightDiff / map.mapTypes[region + '_' + plateType].tileSize.height;
+
+            if (region === 's') {
+                y += .5;
+            }
+
+            //temp = temp / 256;
+            //y -= temp;
+            //y += .375;
+
+            return { x: x, y: y };
+        }
+
+        /**
+
+        */
+        function plateToLatLng(region, plateType, plate) {
+
+            var coord = getWorldCoordinatesFromMSPlate(region, plateType, plate);
+            if (!coord) {
+                return null;
+            }
+            //var point = new google.maps.Point(coord.x, coord.y);
+            //var origin = new google.maps.Point(256 / 2, 190 / 2);
+            //var pixelsPerLonDegree_ = 256 / 360;
+            //var pixelsPerLonRadian_ = 190 / (2 * Math.PI);
+            //var lng = (point.x - origin.x) / pixelsPerLonDegree_;
+            //var latRadians = (point.y - origin.y) / -pixelsPerLonRadian_;
+            //var lat = radiansToDegrees(2 * Math.atan(Math.exp(latRadians)) - Math.PI / 2);
+
+            var n = Math.PI - 2 * Math.PI * coord.y / Math.pow(2, 7);
+            var lng = coord.x / Math.pow(2, 7) * 360 - 180;
+            var lat = (180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))));
+
+            //console.log("(" + coord.x + ", " + coord.y + ") -> (" + lng + ", " + lat + ")");
+
+            return {
+                lat: lat,
+                lng: lng
+            }
+        }
+
+        /**
+
+        */
+        function goToPlate(plate) {
+            var mapTypeId = map.getMapTypeId();
+            var region = mapTypeId.substr(0, mapTypeId.indexOf('_'));
+            var plateType = mapTypeId.substr(mapTypeId.indexOf('_') + 1);
+
+            var latLng = plateToLatLng(region, plateType, plate);
+
+            if (latLng) {
+                map.setCenter(new google.maps.LatLng(latLng.lat, latLng.lng));
+                map.setZoom(9);
+            }
+        }
+
+        /**
+        Doesn't do much right now..
+        */
+        function getNormalizedCoord(coord, zoom) {
+            var y = coord.y;
+            var x = coord.x;
+
+		    /*
+            // tile range in one direction range is dependent on zoom level
+            // 0 = 1 tile, 1 = 2 tiles, 2 = 4 tiles, 3 = 8 tiles, etc
+            var tileRanges = {
+                8: { x: 40, y: 164 },
+                9: { x: 80, y: 328 },
+                10: { x: 160, y: 656},
+                11: { x: 320, y: 1312},
+                12: { x: 640, y: 2624 }
+            }
+
+            var tileRangeY = tileRanges[zoom].y;
+            var tileRangeX = tileRanges[zoom].x;
+
+            // don't repeat across y-axis (vertically)
+            if (y < 0 || y >= tileRangeY) {
+                //console.log(y + ' is outside y range');
+                return null;
+            }
+
+            // repeat across x-axis
+            if (x < 0 || x >= tileRangeX) {
+                //console.log(x + ' is outside x range');
+                return null;
+                //x = (x % tileRangeX + tileRangeX) % tileRangeX;
+            }
+            */
+
+            return {
+                x: x,
+                y: y
+            };
+        }
+
+        /**
+         * The HomeControl adds a control to the map that simply
+         * returns the user to Chicago. This constructor takes
+         * the control DIV as an argument.
+         * @constructor
+         */
+        //function ElectricOrGasControl(controlDiv, map, text, value) {
+
+        //    // Set CSS styles for the DIV containing the control
+        //    // Setting padding to 5 px will offset the control
+        //    // from the edge of the map
+        //    controlDiv.style.padding = '5px';
+        //    controlDiv.style.paddingLeft = '0';
+        //    controlDiv.style.paddingRight = '0';
+
+        //    // Set CSS for the control border
+        //    var controlUI = document.createElement('div');
+        //    controlUI.style.backgroundColor = 'white';
+        //    controlUI.style.borderStyle = 'solid';
+        //    controlUI.style.borderWidth = '1px';
+        //    controlUI.style.cursor = 'pointer';
+        //    controlUI.style.textAlign = 'center';
+        //    controlUI.title = 'Click to set the map to "' + text + '" mains and services';
+        //    if(value === e_or_g) controlDiv.style.fontWeight = '700'
+        //    controlDiv.appendChild(controlUI);
+
+        //    // Set CSS for the control interior
+        //    var controlText = document.createElement('div');
+        //    controlText.style.fontFamily = 'Arial,sans-serif';
+        //    controlText.style.fontSize = '12px';
+        //    controlText.style.paddingLeft = '4px';
+        //    controlText.style.paddingRight = '4px';
+        //    controlText.innerHTML = text;
+        //    controlUI.appendChild(controlText);
+
+        //    // Setup the click event listeners: simply set the map to
+        //    // Chicago
+        //    google.maps.event.addDomListener(controlUI, 'click', function () {
+        //        e_or_g = value;
+        //        var valToReplace = e_or_g === 'e' ? '_g' : '_e';
+        //        var replaceWith = e_or_g === 'e' ? '_e' : '_g';
+        //        map.setMapTypeId(map.getMapTypeId().replace(valToReplace, replaceWith));
+        //    });
+
+        //}
+
+        function InvertControl(controlDiv)
+        {
+            // Set CSS styles for the DIV containing the control
+            // Setting padding to 5 px will offset the control
+            // from the edge of the map
+            controlDiv.style.padding = '5px';
+            controlDiv.style.paddingLeft = '0';
+            controlDiv.style.paddingRight = '0';
+            controlDiv.style.marginLeft = '5px';
+            controlDiv.style.marginRight = '5px';
+
+            // Set CSS for the control border
+            var controlUI = document.createElement('div');
+            controlUI.style.backgroundColor = 'white';
+            controlUI.style.borderStyle = 'solid';
+            controlUI.style.borderWidth = '1px';
+            controlUI.style.cursor = 'pointer';
+            controlUI.style.textAlign = 'center';
+            controlUI.title = 'Click to invert colors';
+
+            controlDiv.appendChild(controlUI);
+
+            // Set CSS for the control interior
+            var controlText = document.createElement('div');
+            controlText.style.fontFamily = 'Arial,sans-serif';
+            controlText.style.fontSize = '12px';
+            controlText.style.paddingLeft = '4px';
+            controlText.style.paddingRight = '4px';
+            controlText.innerHTML = 'Invert';
+            controlUI.appendChild(controlText);
+
+            // Setup the click event listeners: simply set the map to
+            // Chicago
+            google.maps.event.addDomListener(controlUI, 'click', function () {
+                inverted = !inverted;
+                if (inverted) {
+                    $('html').addClass('invert');
+                } else {
+                    $('html').removeClass('invert');
+                }
+            });
+        }
+
+        function ElectricGasControl(controlDiv) {
+            // Set CSS styles for the DIV containing the control
+            // Setting padding to 5 px will offset the control
+            // from the edge of the map
+            controlDiv.style.padding = '5px';
+            controlDiv.style.paddingLeft = '0';
+            controlDiv.style.paddingRight = '0';
+            controlDiv.style.marginLeft = '5px';
+            controlDiv.style.marginRight = '5px';
+
+            // electric div
+            var electricUI = document.createElement('div');
+            electricUI.style.backgroundColor = 'white';
+            electricUI.style.borderStyle = 'solid';
+            electricUI.style.borderWidth = '1px';
+            electricUI.style.cursor = 'pointer';
+            electricUI.style.textAlign = 'center';
+            electricUI.title = 'Click to change to electric plates';
+
+            // electric text
+            var electricText = document.createElement('div');
+            electricText.style.fontFamily = 'Arial,sans-serif';
+            electricText.style.fontSize = '12px';
+            electricText.style.paddingLeft = '4px';
+            electricText.style.paddingRight = '4px';
+            electricText.innerHTML = 'Electric';
+            electricUI.appendChild(electricText);
+
+            // gas div
+            var gasUI = document.createElement('div');
+            gasUI.style.backgroundColor = 'white';
+            gasUI.style.borderStyle = 'solid';
+            gasUI.style.borderWidth = '1px';
+            gasUI.style.cursor = 'pointer';
+            gasUI.style.textAlign = 'center';
+            gasUI.title = 'Click to change to gas plates';
+
+            // gas text
+            var gasText = document.createElement('div');
+            gasText.style.fontFamily = 'Arial,sans-serif';
+            gasText.style.fontSize = '12px';
+            gasText.style.paddingLeft = '4px';
+            gasText.style.paddingRight = '4px';
+            gasText.innerHTML = 'Gas';
+            gasUI.appendChild(gasText);
+
+            controlDiv.appendChild(electricUI);
+            controlDiv.appendChild(gasUI);
+
+            // Setup the click event listeners: simply set the map to
+            // Chicago
+            google.maps.event.addDomListener(electricUI, 'click', function () {
+                if (e_or_g !== 'e') {
+                    e_or_g = 'e';
+                    gasText.style.fontWeight = '400'
+                    electricText.style.fontWeight = 'Bold'
+                    $('img').each(function (idx, val) {
+                        $(this).attr('src', $(this).attr('src').replace('g_m_and_s', 'e_m_and_s'));
+                    });
+                }
+            });
+
+            google.maps.event.addDomListener(gasUI, 'click', function () {
+                if (e_or_g !== 'g') {
+                    e_or_g = 'g';
+                    electricText.style.fontWeight = '400'
+                    gasText.style.fontWeight = 'Bold'
+                    $('img').each(function (idx, val) {
+                        $(this).attr('src', $(this).attr('src').replace('e_m_and_s', 'g_m_and_s'));
+                    });
+                }
+            });
+        }
+
+        /**
+
+        */
+        function initialize() {
+
+            e_or_g = 'e'; // start with electric..
+            var startMapTypeId = 'm_e';
+            var startCenter = lastMapPositions[startMapTypeId];
+            var startZoomLevel = 7;
+
+            // override defaults with cookies..
+            if ($.cookie('selected_maptypeid')) {
+                startMapTypeId = $.cookie('selected_maptypeid');
+                lastMapPositions[startMapTypeId] = new google.maps.LatLng(
+                    parseFloat($.cookie(startMapTypeId + "_lat")),
+                    parseFloat($.cookie(startMapTypeId + "_lng"))
+                );
+            } else {
+                $.cookie('selected_maptypeid', startMapTypeId);
+            }
+
+            if ($.cookie('selected_zoom')) {
+                startZoomLevel = parseInt($.cookie('selected_zoom'));
+            }
+
+            // override cookie with hash..
+            var hash = document.location.search;
+            var deparam = {};
+            if (hash.length > 0) {
+                hash = hash.substr(1);
+                deparam = $.deparam(hash);
+
+                if (deparam.hasOwnProperty('region')) {
+                    var deparamRegion = deparam.region;
+                    startMapTypeId = deparamRegion + "_e";
+                }
+
+                //if (deparam.hasOwnProperty('plate') &&
+                //    deparam.plate.length > 0) {
+                //    //var centerCommaIndex = deparam.center.indexOf(',');
+                //    //var deparamLat = parseFloat(deparam.center.substr(0, centerCommaIndex));
+                //    //var deparamLng = parseFloat(deparam.center.substr(centerCommaIndex + 1));
+                //    //if (!isNaN(deparamLat) && !isNaN(deparamLng)) {
+                //    var currentRegion = startMapTypeId.substr(0, startMapTypeId.indexOf('_'));
+                //    var currentPlateType = startMapTypeId.substr(startMapTypeId.indexOf('_') + 1);
+
+                //    var plateLatLng = plateToLatLng(currentRegion, currentPlateType, deparam.plate);
+                //    lastMapPositions[startMapTypeId] = new google.maps.LatLng(
+                //        plateLatLng.lat, plateLatLng.lng
+                //    );
+                //    //}
+                //}
+
+                if (deparam.hasOwnProperty('zoom')) {
+                    startZoomLevel = parseInt(deparam.zoom);
+                }
+            }
+
+            var mapOptions = {
+                center: lastMapPositions[startMapTypeId],
+                zoom: startZoomLevel,
+                backgroundColor: '#000000',
+                streetViewControl: false,
+                mapTypeId: startMapTypeId,
+                mapTypeControlOptions: {
+                    mapTypeIds: ['m_e', 'bq_e', 'x_e', 's_e']
+                }
+            };
+
+            map = new google.maps.Map(document.getElementById('map_canvas'), mapOptions);
+
+            // setup electric maps..
+
+            map.mapTypes.set('m_e', new google.maps.ImageMapType({
+                getTileUrl: function (coord, zoom) {
+                    var normalizedCoord = getNormalizedCoord(coord, zoom);
+                    if (!normalizedCoord) { return null; }
+                    return "./images/m/" + (e_or_g === 'e' ? "e_m_and_s" : "g_m_and_s") + "/" + (zoom <= 9 ? "labeled" : "normal") + "/" + zoom + "/" + normalizedCoord.x + "/" + normalizedCoord.y + ".png";
+                },
+                tileSize: new google.maps.Size(256, 190),
+                maxZoom: 12,
+                minZoom: 7,
+                name: "M"
+            }));
+
+            map.mapTypes.set('bq_e', new google.maps.ImageMapType({
+                getTileUrl: function (coord, zoom) {
+                    var normalizedCoord = getNormalizedCoord(coord, zoom);
+                    if (!normalizedCoord) { return null; }
+                    return "./images/bq/" + (e_or_g === 'e' ? "e_m_and_s" : "g_m_and_s") + "/" + (zoom <= 9 ? "labeled" : "normal") + "/" + zoom + "/" + normalizedCoord.x + "/" + normalizedCoord.y + ".png";
+                },
+                tileSize: new google.maps.Size(256, 190),
+                maxZoom: 12,
+                minZoom: 7,
+                name: "BQ"
+            }));
+
+            map.mapTypes.set('x_e', new google.maps.ImageMapType({
+                getTileUrl: function (coord, zoom) {
+                    var normalizedCoord = getNormalizedCoord(coord, zoom);
+                    if (!normalizedCoord) { return null; }
+                    return "./images/x/" + (e_or_g === 'e' ? "e_m_and_s" : "g_m_and_s") + "/" + (zoom <= 9 ? "labeled" : "normal") + "/" + zoom + "/" + normalizedCoord.x + "/" + normalizedCoord.y + ".png";
+                },
+                tileSize: new google.maps.Size(256, 190),
+                maxZoom: 12,
+                minZoom: 7,
+                name: "X"
+            }));
+
+            map.mapTypes.set('s_e', new google.maps.ImageMapType({
+                getTileUrl: function (coord, zoom) {
+                    var normalizedCoord = getNormalizedCoord(coord, zoom);
+                    if (!normalizedCoord) { return null; }
+                    return "./images/s/" + (e_or_g === 'e' ? "e_m_and_s" : "g_m_and_s") + "/" + (zoom <= 9 ? "labeled" : "normal") + "/" + zoom + "/" + normalizedCoord.x + "/" + normalizedCoord.y + ".png";
+                },
+                tileSize: new google.maps.Size(257, 256),
+                maxZoom: 12,
+                minZoom: 7,
+                name: "S"
+            }));
+
+            // setup gas maps..
+
+            //map.mapTypes.set('m_g', new google.maps.ImageMapType({
+            //    getTileUrl: function (coord, zoom) {
+            //        var normalizedCoord = getNormalizedCoord(coord, zoom);
+            //        if (!normalizedCoord) { return null; }
+            //        return "./images/m/g_m_and_s/" + (zoom <= 9 ? "labeled" : "normal") + "/" + zoom + "/" + normalizedCoord.x + "/" + normalizedCoord.y + ".png";
+            //    },
+            //    tileSize: new google.maps.Size(256, 192),
+            //    maxZoom: 12,
+            //    minZoom: 7,
+            //    name: "M"
+            //}));
+
+            //map.mapTypes.set('bq_g', new google.maps.ImageMapType({
+            //    getTileUrl: function (coord, zoom) {
+            //        var normalizedCoord = getNormalizedCoord(coord, zoom);
+            //        if (!normalizedCoord) { return null; }
+            //        return "./images/bq/g_m_and_s/" + (zoom <= 9 ? "labeled" : "normal") + "/" + zoom + "/" + normalizedCoord.x + "/" + normalizedCoord.y + ".png";
+            //    },
+            //    tileSize: new google.maps.Size(256, 192),
+            //    maxZoom: 12,
+            //    minZoom: 7,
+            //    name: "BQ"
+            //}));
+
+            //map.mapTypes.set('x_g', new google.maps.ImageMapType({
+            //    getTileUrl: function (coord, zoom) {
+            //        var normalizedCoord = getNormalizedCoord(coord, zoom);
+            //        if (!normalizedCoord) { return null; }
+            //        return "./images/x/g_m_and_s/" + (zoom <= 9 ? "labeled" : "normal") + "/" + zoom + "/" + normalizedCoord.x + "/" + normalizedCoord.y + ".png";
+            //    },
+            //    tileSize: new google.maps.Size(256, 192),
+            //    maxZoom: 12,
+            //    minZoom: 7,
+            //    name: "X"
+            //}));
+
+            //map.mapTypes.set('s_g', new google.maps.ImageMapType({
+            //    getTileUrl: function (coord, zoom) {
+            //        var normalizedCoord = getNormalizedCoord(coord, zoom);
+            //        if (!normalizedCoord) { return null; }
+            //        return "./images/s/g_m_and_s/" + (zoom <= 9 ? "labeled" : "normal") + "/" + zoom + "/" + normalizedCoord.x + "/" + normalizedCoord.y + ".png";
+            //    },
+            //    tileSize: new google.maps.Size(256, 192),
+            //    maxZoom: 12,
+            //    minZoom: 7,
+            //    name: "S"
+            //}));
+
+            // update lastMapPositions and store center in cookies so we can
+            // put the user right back where they were when they revisit..
+            google.maps.event.addListener(map, 'center_changed', function () {
+                var center = map.getCenter();
+                var mtid = this.getMapTypeId();
+                lastMapPositions[mtid] = center;
+                $.cookie(mtid + "_lat", center.lat());
+                $.cookie(mtid + "_lng", center.lng());
+            });
+
+            // store the newly selected map types in cookie so we can have it
+            // selected the next time the user visits the page, also update the
+            // center of the map to the last center of the new map type..
+            google.maps.event.addListener(map, 'maptypeid_changed', function () {
+                $.cookie('selected_maptypeid', this.getMapTypeId());
+                this.setCenter(lastMapPositions[this.getMapTypeId()]);
+                this.setZoom(lastMapZooms[this.getMapTypeId()]);
+            });
+
+            // store the newly selected map types in cookie so we can have it
+            // selected the next time the user visits the page, also update the
+            // center of the map to the last center of the new map type..
+            google.maps.event.addListener(map, 'zoom_changed', function () {
+                $.cookie('selected_zoom', this.getZoom());
+                lastMapZooms[this.getMapTypeId()] = this.getZoom();
+            });
+
+            var egDiv = document.createElement('div');
+            var egControl = new ElectricGasControl(egDiv);
+            egDiv.index = 2;
+            map.controls[google.maps.ControlPosition.TOP_RIGHT].push(egDiv);
+
+            var invertDiv = document.createElement('div');
+            var invertControl = new InvertControl(invertDiv);
+            invertDiv.index = 3;
+            map.controls[google.maps.ControlPosition.TOP_RIGHT].push(invertDiv);
+
+            var searchForm = $('#plate_search_form').get(0);
+            searchForm.index = 1;
+            map.controls[google.maps.ControlPosition.TOP_LEFT].push(searchForm);
+
+            $('#plate_search_form').on('submit', function (e) {
+                e.preventDefault();
+                goToPlate($('#plate_search').prop('value'));
+            });
+
+            if (deparam.hasOwnProperty('plate') &&
+                deparam.plate.length > 0) {
+                goToPlate(deparam.plate);
+            }
+
+            //Adding here the stuff for our gas or electricty button
+            //button = $("#e_or_g_button");
+            //(e_or_g ==="e")? button.text("Change to Gas Map") : button.text("Change to Elec. Map");
+            //map.controls[google.maps.ControlPosition.TOP_RIGHT].push(button.get(0));
+
+	        /*
+            var electricControlDiv = document.createElement('div');
+            var electricControl = new ElectricOrGasControl(electricControlDiv, map, 'Electric', 'e');
+            electricControlDiv.index = 2;
+            map.controls[google.maps.ControlPosition.TOP_RIGHT].push(electricControlDiv);
+
+            var gasControlDiv = document.createElement('div');
+            var gasControl = new ElectricOrGasControl(gasControlDiv, map, 'Gas', 'g');
+            gasControlDiv.index = 1;
+            map.controls[google.maps.ControlPosition.TOP_RIGHT].push(gasControlDiv);
+
+            var updateBoldnress = function () {
+                electricControlDiv.style.fontWeight = 'normal';
+                gasControlDiv.style.fontWeight = 'normal';
+                if (e_or_g === 'e') {
+                    electricControlDiv.style.fontWeight = 'bold';
+                } else {
+                    gasControlDiv.style.fontWeight = 'bold';
+                }
+            }
+
+            google.maps.event.addDomListener(electricControlDiv, 'click', updateBoldnress);
+            google.maps.event.addDomListener(gasControlDiv, 'click', updateBoldnress);
+	        */
+        }
+
+        google.maps.event.addDomListener(window, 'load', initialize);
+
+        /*
+        function load_new_maps(){
+            var button = $("#e_or_g_button");
+            (e_or_g === "e")? e_or_g = "g" : e_or_g = "e"; //WHen the type is e we change to g when it is g we change to e
+
+            (e_or_g === "e")? button.text("Change to Gas Map") : button.text("Change to Elec. Map");
+
+            $('img').each(function(idx, val) {
+	            //console.log($(this).attr('src'));
+	            //$(this).attr('src', $(this).attr('src') + '?timestamp=' + new Date().getTime());
+	            if(e_or_g === 'e')
+		            $(this).attr('src', $(this).attr('src').replace('g_m_and_s', 'e_m_and_s'));
+	            else
+		            $(this).attr('src', $(this).attr('src').replace('e_m_and_s', 'g_m_and_s'));
+            });
+
+            return;
+            type = map.mapTypeId
+            if(type === 'm_e') {
+                google.maps.event.addListenerOnce(map, 'maptypeid_changed', function () {
+                    google.maps.event.addListenerOnce(map, 'idle', function () {
+                        console.log('map type id changed');
+                        map.setMapTypeId("m_e");
+                    });
+                });
+
+
+
+                map.setMapTypeId("bq_e");
+
+            }
+            else if(type === "bq_e") {
+                google.maps.event.addListenerOnce(map, 'maptypeid_changed', function () {
+                    google.maps.event.addListenerOnce(map, 'idle', function () {
+                        console.log('map type id changed');
+                        map.setMapTypeId("bq_e");
+                    });
+                });
+
+                map.setMapTypeId("m_e");
+
+            }
+            else if(type === "x_e") {
+                google.maps.event.addListenerOnce(map, 'maptypeid_changed', function () {
+                    google.maps.event.addListenerOnce(map, 'idle', function () {
+                        console.log('map type id changed');
+                        map.setMapTypeId("x_e");
+                    });
+                });
+
+
+                map.setMapTypeId("m_e");
+
+            } else {
+
+                google.maps.event.addListenerOnce(map, 'maptypeid_changed', function () {
+                    google.maps.event.addListenerOnce(map, 'idle', function () {
+                        console.log('map type id changed');
+                        map.setMapTypeId("s_e");
+                    });
+                });
+
+
+                map.setMapTypeId("m_e");
+
+            };
+        }
+        */
+    </script>
+</head>
+<body>
+    <div id="map_canvas"></div>
+    <div>
+        <form id="plate_search_form" style="margin-top:1.0em;">
+            <input type="search" id="plate_search" placeholder="i.e. 18-I, F2118"  />
+            <input type="submit" value="Search" />
+			<div>
+				<a href="http://ceorg/sites/electricops/SiteDirectory/MappingCommittee/Shared Documents/Mains and Services Plate Indexes" style="color:white;" target="_blank">
+					Plate Cross Street Index
+				</a>
+			</div>
+		</form>
+        <!--<button id="e_or_g_button" onclick="load_new_maps();"></button>-->
+    </div>
+</body>
+</html>
