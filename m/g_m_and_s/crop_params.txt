@@ -1,0 +1,3 @@
+chop_south_percent=0.051248
+chop_north_percent=0.075339
+shave_sides_percent=0.037075

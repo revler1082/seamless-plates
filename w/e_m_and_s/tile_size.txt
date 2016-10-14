@@ -1,0 +1,2 @@
+width=190
+height=256
